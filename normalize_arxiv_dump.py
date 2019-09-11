@@ -11,8 +11,10 @@
 import chardet
 import gzip
 import magic
+import tqdm
 import os
 import re
+import glob
 import shutil
 import subprocess
 import sys
@@ -108,116 +110,85 @@ def normalize(IN_DIR, OUT_DIR, write_logs=True):
     if not os.path.isdir(OUT_DIR):
         os.makedirs(OUT_DIR)
 
-    for fn in os.listdir(IN_DIR):
+    for fn in tqdm.tqdm(os.listdir(IN_DIR)):
+
         path = os.path.join(IN_DIR, fn)
-        aid, ext = os.path.splitext(fn)
-        if PDF_EXT_PATT.match(ext):
-            # copy over pdf file as is
-            dest = os.path.join(OUT_DIR, fn)
-            shutil.copyfile(path, dest)
-        elif GZ_EXT_PATT.match(ext):
-            if tarfile.is_tarfile(path):
-                with tempfile.TemporaryDirectory() as tmp_dir_path:
-                    # extract archive contents
-                    tar = tarfile.open(path)
-                    fnames = tar.getnames()
-                    tar.extractall(path=tmp_dir_path)
-                    # identify main tex file
-                    main_tex_path = None
-                    ignored_names = []
-                    # check .tex files first
-                    for tfn in fnames:
-                        if not TEX_EXT_PATT.match(os.path.splitext(tfn)[1]):
-                            ignored_names.append(tfn)
-                            continue
-                        tmp_file_path = os.path.join(tmp_dir_path, tfn)
-                        if os.path.isdir(tmp_file_path):
-                            continue
-                        try:
-                            cntnt = read_file(tmp_file_path)
-                        except:
-                            continue
-                        if re.search(MAIN_TEX_PATT, cntnt) is not None:
-                            main_tex_path = tmp_file_path
-                    # try other files
-                    if main_tex_path is None:
-                        for tfn in ignored_names:
-                            tmp_file_path = os.path.join(tmp_dir_path, tfn)
-                            if NON_TEXT_PATT.match(os.path.splitext(tfn)[1]):
-                                continue
-                            try:
-                                cntnt = read_file(tmp_file_path)
-                                if re.search(MAIN_TEX_PATT, cntnt) is not None:
-                                    main_tex_path = tmp_file_path
-                            except:
-                                continue
-                    # give up
-                    if main_tex_path is None:
-                        log(('couldn\'t find main tex file in dump archive {}'
-                             '').format(fn))
-                        continue
-                    # "identify" bbl file
-                    # https://arxiv.org/help/submit_tex#bibtex
-                    main_tex_fn = os.path.normpath(
-                        main_tex_path).split(os.sep)[-1]
-                    fn_base = os.path.splitext(main_tex_path)[0]
-                    bbl_fn = '{}.bbl'.format(fn_base)
-                    if os.path.isfile(os.path.join(tmp_dir_path, bbl_fn)):
-                        latexpand_args = ['latexpand',
-                                          '--expand-bbl',
-                                          bbl_fn,
-                                          main_tex_fn]
-                    else:
-                        latexpand_args = ['latexpand',
-                                          main_tex_fn]
-                    # flatten to single tex file and save
-                    new_tex_fn = '{}.tex'.format(aid)
-                    tmp_dest = os.path.join(tmp_dir_path, new_tex_fn)
-                    out = open(tmp_dest, mode='w')
-                    if write_logs:
-                        err = open(
-                            os.path.join(OUT_DIR, 'log_latexpand.txt'), 'a'
-                            )
-                    else:
-                        err = open(os.devnull, 'w')
-                    err.write('\n------------- {} -------------\n'.format(aid))
-                    err.flush()
-                    subprocess.run(latexpand_args, stdout=out, stderr=err,
-                                   cwd=tmp_dir_path)
-                    out.close()
-                    err.close()
-                    # re-read and write to ensure utf-8 b/c latexpand doesn't
-                    # behave
-                    cntnt = read_file(tmp_dest)
-                    if PRE_FIX_NATBIB:
-                        cntnt = NATBIB_PATT.sub(r'\\cite{\3}', cntnt)
-                    if PRE_FIX_BIBOPT:
-                        cntnt = BIBOPT_PATT.sub(r'\\bibitem', cntnt)
-                    if PRE_FILTER_MATH:
-                        cntnt = remove_math(cntnt)
-                    dest = os.path.join(OUT_DIR, new_tex_fn)
-                    with open(dest, mode='w', encoding='utf-8') as f:
-                        f.write(cntnt)
+
+        # identify main tex file
+        main_tex_path = None
+        ignored_names = []
+
+        # check .tex files first
+        for tfn in os.listdir(path):
+
+            if not TEX_EXT_PATT.match(os.path.splitext(tfn)[1]):
+                ignored_names.append(tfn)
+                continue
+
+            try:
+                cntnt = read_file(os.path.join(path, tfn))
+            except:
+                continue
+
+            if re.search(MAIN_TEX_PATT, cntnt) is not None:
+                main_tex_path = tfn
+
+        # try other files
+        if main_tex_path is None:
+            for tfn in ignored_names:
+                if NON_TEXT_PATT.match(os.path.splitext(tfn)[1]):
+                    continue
+                try:
+                    cntnt = read_file(os.path.join(path, tfn))
+                    if re.search(MAIN_TEX_PATT, cntnt) is not None:
+                        main_tex_path = tfn
+                except:
+                    continue
+
+        # give up
+        if main_tex_path is None:
+            log(('couldn\'t find main tex file in dump archive {}'
+                 '').format(fn))
+            continue
+
+        # flatten to single tex file and save
+        with tempfile.TemporaryDirectory() as tmp_dir_path:
+            temp_tex_fn = os.path.join(tmp_dir_path, f'{fn}.tex')
+
+            # "identify" bbl file
+            # https://arxiv.org/help/submit_tex#bibtex
+            main_tex_fn = os.path.join(path, main_tex_path)
+            bbl_files = glob.glob(os.path.join(path, '*.bbl'))
+
+            if bbl_files:
+                latexpand_args = ['latexpand',
+                                  '--expand-bbl',
+                                  bbl_files[0],
+                                  main_tex_fn,
+                                  '--output',
+                                  temp_tex_fn]
             else:
-                # extraxt gzipped tex file
-                cntnt = read_gzipped_file(path)
-                if not cntnt:
-                    continue
-                if re.search(MAIN_TEX_PATT, cntnt) is None:
-                    log('unexpected content in dump archive {}'.format(fn))
-                    continue
-                new_fn = '{}.tex'.format(aid)
-                if PRE_FIX_NATBIB:
-                    cntnt = NATBIB_PATT.sub(r'\\cite{\3}', cntnt)
-                if PRE_FIX_BIBOPT:
-                    cntnt = BIBOPT_PATT.sub('\\bibitem', cntnt)
-                if PRE_FILTER_MATH:
-                    cntnt = remove_math(cntnt)
-                dest = os.path.join(OUT_DIR, new_fn)
-                with open(dest, mode='w', encoding='utf-8') as f:
-                    f.write(cntnt)
-        else:
-            log('unexpected file {} in dump directory'.format(fn))
+                latexpand_args = ['latexpand',
+                                  main_tex_fn,
+                                  '--output',
+                                  temp_tex_fn]
+
+            with open(os.path.join(OUT_DIR, 'log_latexpand.txt'), 'a+') as err:
+                subprocess.run(latexpand_args, stderr=err)
+
+            # re-read and write to ensure utf-8 b/c latexpand doesn't
+            # behave
+            new_tex_fn = os.path.join(OUT_DIR, f'{fn}.tex')
+            cntnt = read_file(temp_tex_fn)
+            if PRE_FIX_NATBIB:
+                cntnt = NATBIB_PATT.sub(r'\\cite{\3}', cntnt)
+            if PRE_FIX_BIBOPT:
+                cntnt = BIBOPT_PATT.sub(r'\\bibitem', cntnt)
+            if PRE_FILTER_MATH:
+                cntnt = remove_math(cntnt)
+            with open(new_tex_fn, mode='w', encoding='utf-8') as f:
+                f.write(cntnt)
+
     return True
 
 
@@ -228,6 +199,7 @@ if __name__ == '__main__':
         sys.exit()
     IN_DIR = sys.argv[1]
     OUT_DIR = sys.argv[2]
+
     ret = normalize(IN_DIR, OUT_DIR)
-    if not ret:
-        sys.exit()
+
+    print('done.')
