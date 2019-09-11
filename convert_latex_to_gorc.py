@@ -69,59 +69,6 @@ def process_bibentry(bib_text: str) -> Dict:
 
     return ' '.join(bib_lines)
 
-    # # get authors
-    # author_text = ""
-    # remainder = bib_lines
-    #
-    # for i, line in enumerate(bib_lines):
-    #     if ' and' in line and line.endswith('.'):
-    #         author_text += line
-    #         remainder = bib_lines[i+1:]
-    #         break
-    #     elif line.count(',') >= 3:
-    #         author_text += line + ' '
-    #     else:
-    #         remainder = bib_lines[i:]
-    #         break
-    #
-    # authors = process_authors(author_text, True)
-    #
-    # # get title
-    # title_text = ""
-    # for i, line in enumerate(remainder):
-    #     if line.endswith('.'):
-    #         title_text += line
-    #         remainder = remainder[i+1:]
-    #         break
-    #     else:
-    #         title_text += line + ' '
-    #
-    # # get year and venue
-    # year = ""
-    # venue = ""
-    #
-    # if remainder:
-    #     remainder = ' '.join(remainder)
-    #     year_match = re.match(r'(\d{4})', remainder)
-    #     if year_match:
-    #         year = year_match.group(0)
-    #
-    #     if 'In' in remainder:
-    #         venue = re.match(r'In (.*?)[,|\.]', remainder).group(1)
-    #     else:
-    #         venue = remainder
-    #
-    # return {
-    #     "title": title_text,
-    #     "authors": authors,
-    #     "year": year,
-    #     "venue": venue,
-    #     "volume": "",
-    #     "issn": "",
-    #     "pages": "",
-    #     "other_ids": []
-    # }
-
 
 def process_paragraph(soup: BeautifulSoup, para_el: bs4.element.Tag, section_name: str):
     """
